@@ -17,6 +17,8 @@ module Network.Http.Connection (
     Connection(..),
         -- constructors only for testing
     makeConnection,
+    connectSocket,
+    modifyHostname,
     withConnection,
     openConnection,
     openConnectionSSL,
@@ -111,6 +113,25 @@ makeConnection h c o1 i = do
     o2 <- Streams.builderStream o1
     return $! Connection h c o2 i
 
+connectSocket :: Hostname -> Port -> (Socket -> IO Socket) -> IO Socket
+connectSocket h1' p modify = do
+    is <- getAddrInfo (Just hints) (Just h1) (Just $ show p)
+    let addr = head is
+    let a = addrAddress addr
+    s <- modify =<< socket (addrFamily addr) Stream defaultProtocol
+    connect s a
+    return s
+  where
+    hints = defaultHints {
+        addrFlags = [AI_ADDRCONFIG, AI_NUMERICSERV],
+        addrSocketType = Stream
+    }
+    h1  = S.unpack h1'
+
+modifyHostname :: Hostname -> Port -> ByteString
+modifyHostname h p = if p == 80
+                        then h
+                        else S.concat [ h, ":", S.pack $ show p ]
 
 --
 -- | Given an @IO@ action producing a 'Connection', and a computation
@@ -132,7 +153,6 @@ makeConnection h c o1 i = do
 withConnection :: IO Connection -> (Connection -> IO γ) -> IO γ
 withConnection mkC =
     bracket mkC closeConnection
-
 
 --
 -- | In order to make a request you first establish the TCP
@@ -163,32 +183,10 @@ withConnection mkC =
 -- connection for subsequent requests.
 --
 openConnection :: Hostname -> Port -> IO Connection
-openConnection h1' p = do
-    is <- getAddrInfo (Just hints) (Just h1) (Just $ show p)
-    let addr = head is
-    let a = addrAddress addr
-    s <- socket (addrFamily addr) Stream defaultProtocol
-
-    connect s a
-    (i,o1) <- Streams.socketToStreams s
-
-    o2 <- Streams.builderStream o1
-
-    return Connection {
-        cHost  = h2',
-        cClose = close s,
-        cOut   = o2,
-        cIn    = i
-    }
-  where
-    hints = defaultHints {
-        addrFlags = [AI_ADDRCONFIG, AI_NUMERICSERV],
-        addrSocketType = Stream
-    }
-    h2' = if p == 80
-        then h1'
-        else S.concat [ h1', ":", S.pack $ show p ]
-    h1  = S.unpack h1'
+openConnection h p = do
+    s <- connectSocket h p return
+    (i,o) <- Streams.socketToStreams s
+    makeConnection (modifyHostname h p) (close s) o i
 
 --
 -- | Open a secure connection to a web server.

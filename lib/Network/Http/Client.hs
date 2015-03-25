@@ -96,6 +96,8 @@ module Network.Http.Client (
     Hostname,
     Port,
     Connection,
+    connectSocket,
+    modifyHostname,
     openConnection,
 
     -- * Building Requests
